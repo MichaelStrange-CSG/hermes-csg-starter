@@ -26,6 +26,11 @@ stage_start() {
   rm -f "$LOG_DIR/$1.exit"
   # Long stages run in the background; the .exit file tells Claude Code the stage finished and how.
   trap 'echo $? > "$LOG_DIR/$STAGE.exit"' EXIT
+  # A stage killed from outside (agent tool time limit, Ctrl-C) must not look like success: without these
+  # traps bash ran the EXIT trap with status 0 and wrote 0 to the .exit file (seen in the v1.1.0 link test).
+  trap 'status_add FAIL "Stopped from outside by SIGTERM (killed or timed out)"; exit 143' TERM
+  trap 'status_add FAIL "Stopped from outside by SIGINT"; exit 130' INT
+  trap 'status_add FAIL "Stopped from outside by SIGHUP"; exit 129' HUP
 }
 stage_done()  { say "=== $STAGE: done ==="; status_add DONE "$STAGE"; }
 

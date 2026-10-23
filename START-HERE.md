@@ -49,8 +49,9 @@ Below, `<run> 00-preflight` means the macOS or Windows form above.
 
 Steps 3 and 7 can take 5-20 minutes each, longer than many agents let one command run. Run them **in the
 background** and check every minute or two for `KIT/logs/<step>.exit`. It holds the exit code once the step
-finishes. If your tool has its own background mode, use it. Otherwise start the step detached, with its
-output going to a file you can read:
+finishes. Start these steps **detached**, as below, even if your tool has its own background mode: agent
+background tasks can have a time limit (Claude Code's killed a slow install after 30 minutes in testing),
+and a detached step keeps running regardless.
 
 - macOS: `nohup bash KIT/scripts/mac/10-hermes.sh > KIT/logs/10-hermes.out 2>&1 &`
 - Windows (PowerShell): `Start-Process powershell -WindowStyle Hidden -RedirectStandardOutput KIT\logs\10-hermes.out -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File','KIT\scripts\win\10-hermes.ps1'`
@@ -58,6 +59,12 @@ output going to a file you can read:
 While you wait, glance at the last lines of the `.out` file and the step's `.log` files in `KIT/logs/` so you
 can tell the user it's still moving. When the `.exit` file appears, read the whole `.out` file: its OK, WARN
 and FAIL lines are the step's result. Never start a second copy of a step that is still running.
+
+**Step 3 stuck?** The Hermes installer's download can stall on a slow or throttled connection. If
+`KIT/logs/10-hermes-install.log` hasn't changed for 20 minutes and the `~/.hermes/.hermes-clone-*` folder
+(Windows: `%LOCALAPPDATA%\hermes\.hermes-clone-*`) isn't growing either, stop that step's process, tell the
+user, and start step 3 once more; it cleans up the stalled download first. In testing the retry took
+2 minutes. If it stalls a second time, treat it as a FAIL.
 
 ## Steps
 

@@ -13,6 +13,13 @@ if (Test-Path $marker) { try { $pinned = (Get-Content $marker -Raw | ConvertFrom
 if (($pinned -eq $pin) -and (Get-HermesExe)) {
     Ok 'Hermes already installed at the pinned commit; skipping the installer.'
 } else {
+    # A stalled or killed earlier attempt leaves the installer's staging clone behind; the installer
+    # doesn't reuse or remove it. Only one copy of this step runs at a time, so it's safe to clear.
+    $hermesDir = Join-Path $env:LOCALAPPDATA 'hermes'
+    foreach ($d in @(Get-ChildItem -LiteralPath $hermesDir -Directory -Filter '.hermes-clone-*' -Force -ErrorAction SilentlyContinue)) {
+        Remove-Item -LiteralPath $d.FullName -Recurse -Force -ErrorAction SilentlyContinue
+        Info "Removed a stalled download from an earlier attempt ($($d.Name))"
+    }
     $installer = Join-Path $LogDir 'hermes-install.ps1'
     # Retries cover GitHub's transient 429/5xx answers (seen in rehearsal).
     $dlError = ''

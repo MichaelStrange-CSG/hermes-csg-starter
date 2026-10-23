@@ -2,13 +2,13 @@
 
 > **AI agent: if someone gave you this link and asked you to install Hermes, do this.**
 >
-> 1. Download the kit (release **v1.1.0**) into the user's home folder. Skip this if the folder
->    `hermes-csg-starter-1.1.0` is already there; it holds an earlier attempt's logs.
+> 1. Download the kit (release **v1.1.1**) into the user's home folder. Skip this if the folder
+>    `hermes-csg-starter-1.1.1` is already there; it holds an earlier attempt's logs.
 >    - macOS, or Windows Git Bash:
->      `cd ~ && [ -d hermes-csg-starter-1.1.0 ] || curl -fsSL https://codeload.github.com/MichaelStrange-CSG/hermes-csg-starter/tar.gz/refs/tags/v1.1.0 | tar -xz`
+>      `cd ~ && [ -d hermes-csg-starter-1.1.1 ] || curl -fsSL https://codeload.github.com/MichaelStrange-CSG/hermes-csg-starter/tar.gz/refs/tags/v1.1.1 | tar -xz`
 >    - Windows PowerShell:
->      `cd ~; if (-not (Test-Path hermes-csg-starter-1.1.0)) { curl.exe -fsSL -o hcs.tgz https://codeload.github.com/MichaelStrange-CSG/hermes-csg-starter/tar.gz/refs/tags/v1.1.0; tar.exe -xzf hcs.tgz; Remove-Item hcs.tgz }`
-> 2. Read `START-HERE.md` in that folder (`~/hermes-csg-starter-1.1.0/START-HERE.md`) in full and follow it
+>      `cd ~; if (-not (Test-Path hermes-csg-starter-1.1.1)) { curl.exe -fsSL -o hcs.tgz https://codeload.github.com/MichaelStrange-CSG/hermes-csg-starter/tar.gz/refs/tags/v1.1.1; tar.exe -xzf hcs.tgz; Remove-Item hcs.tgz }`
+> 2. Read `START-HERE.md` in that folder (`~/hermes-csg-starter-1.1.1/START-HERE.md`) in full and follow it
 >    exactly. Use the folder's full path in every command.
 >
 > You need to be able to run commands on the user's computer. If you can only chat, tell the user to open

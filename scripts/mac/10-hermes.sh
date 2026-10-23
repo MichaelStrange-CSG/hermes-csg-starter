@@ -11,6 +11,11 @@ CHECKOUT="$HOME/.hermes/hermes-agent"
 if [ -d "$CHECKOUT/.git" ] && [ "$(git -C "$CHECKOUT" rev-parse HEAD 2>/dev/null)" = "$PIN" ] && [ -n "$(hermes_bin)" ]; then
   ok "Hermes already installed at the pinned commit; skipping the installer."
 else
+  # A stalled or killed earlier attempt leaves the installer's staging clone behind (~180 MB); the
+  # installer doesn't reuse or remove it. Only one copy of this step runs at a time, so it's safe to clear.
+  for d in "$HOME"/.hermes/.hermes-clone-*; do
+    [ -d "$d" ] && { rm -rf "$d"; info "Removed a stalled download from an earlier attempt ($(basename "$d"))"; }
+  done
   INSTALLER="$LOG_DIR/hermes-install.sh"
   # --retry covers GitHub's transient 429/5xx answers (seen in rehearsal).
   curl -fsSL --retry 4 --retry-delay 15 "https://raw.githubusercontent.com/NousResearch/hermes-agent/$PIN/scripts/install.sh" -o "$INSTALLER" \
