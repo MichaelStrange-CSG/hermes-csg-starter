@@ -1,0 +1,35 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(bash scripts/mac/*)",
+      "Bash(powershell -NoProfile -ExecutionPolicy Bypass -File scripts/win/*)",
+      "PowerShell(powershell -NoProfile -ExecutionPolicy Bypass -File scripts/win/*)",
+      "Bash(xcode-select --install)",
+      "Edit(/soul-drafts/**)",
+      "Edit(/logs/installer-notes.md)",
+      "Bash(bash */scripts/mac/*)",
+      "Bash(nohup bash */scripts/mac/*)",
+      "Bash(powershell -NoProfile -ExecutionPolicy Bypass -File *scripts*win*)",
+      "PowerShell(powershell -NoProfile -ExecutionPolicy Bypass -File *scripts*win*)",
+      "Edit(~/hermes-csg-starter-*/soul-drafts/**)",
+      "Edit(~/hermes-csg-starter-*/logs/installer-notes.md)"
+    ],
+    "deny": [
+      "Read(~/.claude/.credentials.json)",
+      "Read(~/.claude.json)",
+      "Read(~/.hermes/auth.json)",
+      "Read(~/.hermes/.env)",
+      "Read(~/.hermes/profiles/*/auth.json)",
+      "Read(~/.hermes/profiles/*/.env)",
+      "Read(~/AppData/Local/hermes/auth.json)",
+      "Read(~/AppData/Local/hermes/.env)",
+      "Read(~/AppData/Local/hermes/profiles/*/auth.json)",
+      "Read(~/AppData/Local/hermes/profiles/*/.env)",
+      "Bash(hermes update*)",
+      "Bash(hermes plugins update*)",
+      "Bash(sudo *)",
+      "PowerShell(hermes update*)",
+      "PowerShell(hermes plugins update*)"
+    ]
+  }
+}

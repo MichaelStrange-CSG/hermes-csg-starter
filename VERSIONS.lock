@@ -1,0 +1,45 @@
+# hermes-csg-starter pinned versions. The install scripts read this file.
+# Format: KEY=VALUE, one per line, no quotes, no spaces around "=".
+# Change only by cutting a new tagged release (see MAINTAINERS.md), never by hand on a coworker's machine.
+
+STARTER_VERSION=1.1.0
+
+# Hermes Agent: exact commit, installed with the official installer at that same commit.
+HERMES_VERSION=v0.21.7
+HERMES_COMMIT=71d34bad1045610252eda02ee79549436896e784
+HERMES_INSTALL_SH_SHA256=034845e34289813ff5fb7fd3e071ec69f6b14aee8ba297a477b31dda6374cb86
+HERMES_INSTALL_PS1_SHA256=61824d6b47be29ab793d0e72872cf56cd7a3e99cbe40abeb177a6c9eef52f485
+
+# Claude Subscription DirectSDK plugin (Nous Research official plugins repo), pinned commit.
+PLUGIN_SOURCE=NousResearch/hermes-official-plugins#claude-subscription-directsdk
+PLUGIN_SHA=9b074e160dbd84427ef59d092e62d9e3e5d44cf7
+PLUGIN_ID=claude-subscription-directsdk-experimental
+PLUGIN_VERSION=0.3.3
+
+# Streaming fix (same as the maintainer's machines): Claude replies stream, so long thinking or a large tool call
+# no longer hits Hermes' 240-second no-output kill. Stage 20 applies both files in patches/:
+#   directsdk-streaming-plugin.patch  plugin: streaming opt-in, summarized thinking text, progress chunks
+#   directsdk-streaming-core.patch    Hermes: a process provider may opt in to streaming (upstream PR #124566)
+# sha256 of each touched file before and after, CRLF normalized to LF (so Windows checkouts match).
+DIRECTSDK_PRISTINE_SHA256=a85c6ab12d7b3e5f17869b6d730d6b2e3affb0adc7e0052e478f25d25289b8a7
+DIRECTSDK_PATCHED_SHA256=df8cb07c66d73340b8af5b8bbe49955f38b2eb8819d65261b663db947e0e5a2b
+PLUGIN_INIT_PRISTINE_SHA256=b44ee1c78304f4e72aa752da9e0f6785858a9f4ce6ff67a39372f15127a4d6be
+PLUGIN_INIT_PATCHED_SHA256=73440c9cecefff50752118da1ff2eb57921db7a841537373c43ebace19f38920
+CORE_TURN_PRISTINE_SHA256=2897575995d8dcbe94bba666ef66043a64c52a6c99e72c45e7da64a5fbdf576b
+CORE_TURN_PATCHED_SHA256=809f38471e58b20d68911c73b39945c3b2b4f1e9de1c8be7d451ac3f91774be1
+CORE_BASE_PRISTINE_SHA256=5824709fb57b9401a72650f7fcd9763d4124ee1c531bb444b7e504fd4501d19e
+CORE_BASE_PATCHED_SHA256=b948b1369e80690fe36bbedef5c5d4871c748bc34a0e31a64fc012fb5c99f0b1
+
+# Claude Code CLI (`claude`). Minimum for every 5.5 model alias; tested version.
+CLAUDE_CODE_MIN=2.1.293
+CLAUDE_CODE_TESTED=2.1.300
+
+# Models tried in order until one answers on the user's plan. Opus first on every plan, Pro included.
+MODEL_PREFERENCE=claude-opus-5-5[1m],claude-opus-5-5,claude-sonnet-5-5
+# Default thinking depth (agent.reasoning_effort) for both profiles.
+REASONING_EFFORT=high
+
+# Platform floors (Node.js 26 and Claude Code requirements).
+MACOS_MIN=13.5
+WINDOWS_MIN_BUILD=17763
+MIN_FREE_GB=10

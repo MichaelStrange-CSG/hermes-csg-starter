@@ -1,0 +1,45 @@
+diff --git a/agent/turn_api_call.py b/agent/turn_api_call.py
+index ef085308..196e9dbf 100644
+--- a/agent/turn_api_call.py
++++ b/agent/turn_api_call.py
+@@ -44,16 +44,21 @@ class ApiCallVerdict:
+ 
+ 
+ def _should_stream(agent: Any) -> bool:
+-    """Streaming is preferred even without consumers (stale-stream / read-timeout health
+-    checks); disabled on provider signal, ACP providers (``acp://`` scheme or an
+-    external-process provider profile), MoA without a display consumer, or Mock clients in
+-    tests (SimpleNamespace, not stream iterators)."""
++    """Prefer streaming for liveness even without display consumers. Process providers
++    must opt in; ACP transports and explicit session/provider disables stay non-streaming."""
+     if getattr(agent, "_disable_streaming", False):
+         return False
+     _base = str(agent.base_url or "").lower()
++    if _base.startswith(("acp://", "acp+tcp://")):
++        return False
++    from providers import get_provider_profile
+     from hermes_cli.runtime_provider_backends import _is_external_process_provider
+ 
+-    if _base.startswith(("acp://", "acp+tcp://")) or _is_external_process_provider(agent.provider):
++    profile = get_provider_profile(agent.provider)
++    streaming = getattr(profile, "supports_streaming", None)
++    if streaming is False:
++        return False
++    if _is_external_process_provider(agent.provider) and streaming is not True:
+         return False
+     if not agent._has_stream_consumers():
+         if agent.provider == "moa":
+diff --git a/providers/base.py b/providers/base.py
+index 9183cf30..5995a833 100644
+--- a/providers/base.py
++++ b/providers/base.py
+@@ -63,6 +63,9 @@ class ProviderProfile:
+     base_url: str = ""
+     models_url: str = ""  # explicit models endpoint; falls back to {base_url}/models
+     auth_type: str = "api_key"   # api_key|oauth_device_code|oauth_external|copilot|aws_sdk
++    # None preserves transport defaults (external-process clients default to non-streaming).
++    # True opts a streaming-capable process client in; False disables streaming for this provider.
++    supports_streaming: bool | None = field(default=None, kw_only=True)
+     supports_health_check: bool = True  # False → doctor skips /models probe for this provider
+     # False → fetch_models returns None without a network call (catalog comes from an SDK/subprocess).
+     supports_model_listing: bool = True

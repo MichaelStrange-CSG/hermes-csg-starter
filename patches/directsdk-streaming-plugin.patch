@@ -1,0 +1,384 @@
+diff --git a/__init__.py b/__init__.py
+index 230679c..8415537 100644
+--- a/__init__.py
++++ b/__init__.py
+@@ -190,6 +190,9 @@ profile = ClaudeOAuthDirectSDKProfile(
+     # A dataclass field (Hermes >= 0.21.4), so a method on the subclass would be shadowed by its None default.
+     classify_api_error=classify_api_error,
+ )
++# Attribute assignment keeps the plugin loadable on hosts predating this capability.
++# Newer hosts use it to avoid buffering a healthy native stream behind a stale-call timer.
++profile.supports_streaming = True
+ register_provider(profile)
+ 
+ # The provider stays registered when Claude Code is missing so `hermes model` can show the
+diff --git a/directsdk.py b/directsdk.py
+index c91c3f8..9e9302a 100644
+--- a/directsdk.py
++++ b/directsdk.py
+@@ -299,7 +299,9 @@ def request_body(kwargs):
+             # Routes without adaptive thinking (Haiku 4.5) 400 on the block; their own
+             # default thinking plus the effort signal below stand in for it.
+             if reasoning.get('enabled') is True and supports_adaptive_thinking(kwargs.get('model')):
+-                body['thinking'] = {'type': 'adaptive'}
++                # 4.7+ defaults thinking.display to "omitted" (empty thinking + signature only),
++                # which leaves Hermes' reasoning panel blank. Mirror core's anthropic_adapter.
++                body['thinking'] = {'type': 'adaptive', 'display': 'summarized'}
+             if effort:
+                 body['output_config'] = {'effort': effort}
+     response_format = kwargs.get('response_format', body.pop('response_format', None))
+@@ -352,7 +354,10 @@ def request_body(kwargs):
+         # The manifest (inert MCP server) and the request body must advertise the same shape.
+         schema = normalize_input_schema(schema)
+         manifest.append({'name': native_name, 'description': description, 'inputSchema': schema})
+-        tools.append({'name': PREFIX + native_name, 'description': description, 'input_schema': schema})
++        # Fine-grained tool streaming: without it the API buffers each argument value, so a large write_file
++        # is silent upstream for its whole generation and looks like a stall to the host's stale timer.
++        tools.append({'name': PREFIX + native_name, 'description': description, 'input_schema': schema,
++                      'eager_input_streaming': True})
+     body['tools'] = tools
+     encoded = json.dumps(body, separators=(',', ':'), allow_nan=False)
+     return encoded, manifest, names
+@@ -949,6 +954,12 @@ class Client:
+                             yield self._chunk(kwargs['model'], {'content': delta['text']})
+                         elif delta.get('type') == 'thinking_delta':
+                             yield self._chunk(kwargs['model'], {'reasoning_content': delta['thinking']})
++                        elif native['type'] not in ('message_stop', 'ping'):
++                            # The model is working but has nothing to show: tool-call arguments (input_json_delta),
++                            # thinking signatures, block boundaries. Hermes' stale detector only sees chunks, so
++                            # without this a long tool call looks like a stall and the host kills a healthy request.
++                            # A ping stays silent: it proves the connection is open, not that the model is working.
++                            yield self._chunk(kwargs['model'], {})
+                 if fast:
+                     with request.lock:
+                         admission = request.admission
+@@ -1010,8 +1021,12 @@ class Client:
+                         yield self._chunk(kwargs['model'], {'content': text[len(emitted):]})
+                     else:
+                         raise RuntimeError('Native final text differs from incremental stream')
++                thinking = ''.join(b.get('thinking', '') for b in blocks if b.get('type') == 'thinking') or None
++                # A turn of thinking alone (no text, no tool call) is Claude stalling, not answering. Hermes promotes a
++                # reasoning-only `stop` to the final answer, which ends the tool loop; left empty, its empty-response
++                # recovery nudges the model on, as before summarized display. The signed thinking still replays.
+                 message = {'role': 'assistant', 'content': text or None, 'tool_calls': calls or None,
+-                           'reasoning_content': ''.join(b.get('thinking', '') for b in blocks if b.get('type') == 'thinking') or None}
++                           'reasoning_content': thinking if text or calls else None}
+                 carrier = {'type': CARRIER, 'version': 1, 'messages': assistants, 'projection': projection(message)}
+                 message['reasoning_details'] = [carrier]
+                 # An upstream refusal is Hermes' content_filter, as core's Anthropic transport maps it (even with a tool
+diff --git a/tests/fixtures/progress_cli.py b/tests/fixtures/progress_cli.py
+new file mode 100644
+index 0000000..691f781
+--- /dev/null
++++ b/tests/fixtures/progress_cli.py
+@@ -0,0 +1,52 @@
++"""Bounded synthetic native CLI for progress/liveness contracts. No Claude import, credentials, or networking."""
++import json
++import os
++import sys
++import time
++
++with open(os.environ['PROGRESS_PIDS'], 'a') as f:
++    f.write(json.dumps({'pid': os.getpid()}) + '\n')
++if '--version' in sys.argv:
++    print('2.1.263 (synthetic offline CLI)')
++    sys.exit(0)
++
++mode = os.environ['PROGRESS_MODE']
++deltas = int(os.environ.get('PROGRESS_DELTAS', '5'))
++gap = float(os.environ.get('PROGRESS_GAP', '0.01'))
++
++
++def emit(obj):
++    print(json.dumps(obj), flush=True)
++
++
++def delta(body):
++    emit({'type': 'stream_event', 'event': {'type': 'content_block_delta', 'delta': body}})
++
++
++for line in sys.stdin:
++    if json.loads(line).get('shouldQuery') is False:
++        emit({'type': 'result', 'num_turns': 0, 'is_error': False})
++
++if mode == 'silent':  # accepted the request, then never produces anything
++    time.sleep(30)
++    sys.exit(0)
++
++usage = {'input_tokens': 1, 'output_tokens': 1}
++if mode == 'tool_args':  # the model is generating a tool call: native streams only argument JSON
++    for _ in range(deltas):
++        delta({'type': 'input_json_delta', 'partial_json': '{'})
++        time.sleep(gap)
++    content, stop = [{'type': 'tool_use', 'id': 'toolu_1', 'name': 'lookup', 'input': {'q': 'x'}}], 'tool_use'
++elif mode == 'pings':  # connection open, model silent: a ping proves the wire, not the work
++    for _ in range(deltas):
++        emit({'type': 'stream_event', 'event': {'type': 'ping'}})
++        time.sleep(gap)
++    content, stop = [{'type': 'text', 'text': 'x'}], 'end_turn'
++else:  # text
++    for _ in range(deltas):
++        delta({'type': 'text_delta', 'text': 'x'})
++        time.sleep(gap)
++    content, stop = [{'type': 'text', 'text': 'x' * deltas}], 'end_turn'
++emit({'type': 'assistant', 'message': {'role': 'assistant', 'content': content, 'stop_reason': stop, 'usage': usage}})
++emit({'type': 'stream_event', 'event': {'type': 'message_stop'}})
++emit({'type': 'result', 'subtype': 'success', 'is_error': False, 'num_turns': 1, 'usage': usage})
+diff --git a/tests/test_directsdk.py b/tests/test_directsdk.py
+index 5e61e05..7c649c4 100644
+--- a/tests/test_directsdk.py
++++ b/tests/test_directsdk.py
+@@ -280,7 +280,7 @@ class Contract(unittest.TestCase):
+         adaptive = json.loads(
+             directsdk.request_body({**self.request(), "extra_body": enabled})[0]
+         )
+-        self.assertEqual(adaptive["thinking"], {"type": "adaptive"})
++        self.assertEqual(adaptive["thinking"], {"type": "adaptive", "display": "summarized"})
+         self.assertEqual(adaptive["output_config"], {"effort": "medium"})
+         for route in ("claude-haiku-4-5", "claude-haiku-4-5-20251001"):
+             # Haiku 4.5 answers `adaptive thinking is not supported on this model` with a 400.
+diff --git a/tests/test_directsdk_admission.py b/tests/test_directsdk_admission.py
+index fb18644..9970fb3 100644
+--- a/tests/test_directsdk_admission.py
++++ b/tests/test_directsdk_admission.py
+@@ -122,6 +122,46 @@ def test_contentless_refusal_is_a_terminal_content_filter(tmp_path, details, ref
+         client.close(); peer.shutdown(); thread.join(); peer.server_close()
+ 
+ 
++@pytest.mark.parametrize('text', ['', 'done'])
++def test_a_thinking_only_turn_reaches_hermes_without_reasoning(tmp_path, text):
++    """With summarized display, a turn of thinking alone would reach Hermes as a reasoning-only `stop`, which Hermes
++    promotes to the final answer, ending the tool loop mid-task. It arrives with no reasoning, so Hermes' empty-response
++    recovery nudges the model on; the signed thinking still replays. A turn with text keeps its reasoning."""
++    usage = {'input_tokens':0, 'output_tokens':0, 'cache_read_input_tokens':0, 'cache_creation_input_tokens':0}
++    class Peer(BaseHTTPRequestHandler):
++        def log_message(self, *args): pass
++        def do_POST(self):
++            self.rfile.read(int(self.headers['Content-Length']))
++            self.send_response(200); self.send_header('Content-Type','text/event-stream'); self.end_headers()
++            events = [
++                {'type':'message_start','message':{'id':'first','role':'assistant','model':'sonnet','content':[], 'usage':usage}},
++                {'type':'content_block_start','index':0,'content_block':{'type':'thinking','thinking':'','signature':''}},
++                {'type':'content_block_delta','index':0,'delta':{'type':'thinking_delta','thinking':'I will run the next command.'}},
++                {'type':'content_block_delta','index':0,'delta':{'type':'signature_delta','signature':'signed-test'}},
++                {'type':'content_block_stop','index':0},
++                *([{'type':'content_block_start','index':1,'content_block':{'type':'text','text':''}},
++                   {'type':'content_block_delta','index':1,'delta':{'type':'text_delta','text':text}},
++                   {'type':'content_block_stop','index':1}] if text else []),
++                {'type':'message_delta','delta':{'stop_reason':'end_turn'},'usage':usage},
++                {'type':'message_stop'},
++            ]
++            self.wfile.write(''.join('data: '+json.dumps(e)+'\n\n' for e in events).encode())
++    peer=ThreadingHTTPServer(('127.0.0.1',0),Peer)
++    thread=threading.Thread(target=peer.serve_forever,daemon=True); thread.start()
++    native=tmp_path/'native.py'; native.write_text(NATIVE)
++    client=directsdk.Client(command=[sys.executable,str(native)],env={'PATH':os.defpath,'HOME':str(tmp_path),'ANTHROPIC_BASE_URL':f'http://127.0.0.1:{peer.server_port}'})
++    try:
++        result=client.create(model='sonnet',messages=[{'role':'user','content':'fixture'}])
++        message=result.choices[0].message
++        assert result.choices[0].finish_reason=='stop' and message.tool_calls is None
++        assert message.reasoning_content==('I will run the next command.' if text else None)
++        assert message.content==(text or None)
++        signed=message.reasoning_details[0]['messages'][0]['content'][0]
++        assert signed['type']=='thinking' and signed['signature']=='signed-test'  # the native turn still replays
++    finally:
++        client.close(); peer.shutdown(); thread.join(); peer.server_close()
++
++
+ def _hermes_reply(response):
+     """What Hermes shows the user for a content_filter response: core's own refusal handler, no fallback configured."""
+     from types import SimpleNamespace
+diff --git a/tests/test_directsdk_models.py b/tests/test_directsdk_models.py
+index b12d228..d34dff1 100644
+--- a/tests/test_directsdk_models.py
++++ b/tests/test_directsdk_models.py
+@@ -81,7 +81,7 @@ def test_haiku_5_5_never_receives_the_thinking_disable():
+     for route in ('haiku', 'haiku-5-5', 'haiku-5.5', 'claude-haiku-5-5', 'claude-haiku-5-5[1m]'):
+         assert 'thinking' not in body(route, {'enabled': False}), route
+         assert 'context_management' not in body(route, {'enabled': False}), route
+-        assert body(route, {'enabled': True, 'effort': 'medium'})['thinking'] == {'type': 'adaptive'}, route
++        assert body(route, {'enabled': True, 'effort': 'medium'})['thinking'] == {'type': 'adaptive', 'display': 'summarized'}, route
+     for route in ('claude-haiku-4-5', 'claude-haiku-4-5-20251001', 'haiku-4-5', 'haiku-4.5'):
+         assert body(route, {'enabled': False})['thinking'] == {'type': 'disabled'}, route
+         assert 'thinking' not in body(route, {'enabled': True, 'effort': 'medium'}), route
+diff --git a/tests/test_directsdk_reasoning_off.py b/tests/test_directsdk_reasoning_off.py
+index d116e9f..4c9c54d 100644
+--- a/tests/test_directsdk_reasoning_off.py
++++ b/tests/test_directsdk_reasoning_off.py
+@@ -39,5 +39,5 @@ def test_reasoning_off_effort_coexists_with_a_structured_output_format():
+ 
+ def test_reasoning_enabled_effort_is_unchanged():
+     body = reasoning_off_body('haiku', {'enabled': True, 'effort': 'high'})
+-    assert body['thinking'] == {'type': 'adaptive'}
++    assert body['thinking'] == {'type': 'adaptive', 'display': 'summarized'}
+     assert body['output_config'] == {'effort': 'high'}
+diff --git a/tests/test_directsdk_tool_names.py b/tests/test_directsdk_tool_names.py
+index d0b59b7..07dd366 100644
+--- a/tests/test_directsdk_tool_names.py
++++ b/tests/test_directsdk_tool_names.py
+@@ -42,9 +42,9 @@ def test_short_names_preserve_literal_wire_manifest_and_history():
+     encoded, manifest, names = directsdk.request_body(request)
+     assert encoded == (
+         '{"max_tokens":17,"tools":['
+-        '{"name":"mcp__hermes__probe","description":"","input_schema":{"type":"object","properties":{}}},'
+-        '{"name":"mcp__hermes__A_1-z","description":"","input_schema":{"type":"object","properties":{}}},'
+-        '{"name":"mcp__hermes__xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx","description":"","input_schema":{"type":"object","properties":{}}}]}'
++        '{"name":"mcp__hermes__probe","description":"","input_schema":{"type":"object","properties":{}},"eager_input_streaming":true},'
++        '{"name":"mcp__hermes__A_1-z","description":"","input_schema":{"type":"object","properties":{}},"eager_input_streaming":true},'
++        '{"name":"mcp__hermes__xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx","description":"","input_schema":{"type":"object","properties":{}},"eager_input_streaming":true}]}'
+     )
+     assert json.dumps(manifest) == (
+         '[{"name": "probe", "description": "", "inputSchema": {"type": "object", "properties": {}}}, '
+@@ -141,3 +141,12 @@ def test_native_alias_maps_back_and_carrier_restores_on_second_request(tmp_path,
+         assert client.create(**request).choices[0].message.content == "done"
+     finally:
+         client.close()
++
++
++def test_every_wire_tool_asks_for_fine_grained_input_streaming():
++    """Without eager_input_streaming the API buffers each argument value, so a long write_file is
++    silent upstream for its whole generation and the host's stale timer cannot tell it from a stall.
++    The inert MCP manifest stays a plain MCP tool shape."""
++    encoded, manifest, _ = directsdk.request_body({"tools": [tool("probe"), tool("x" * 60)]})
++    assert all(t["eager_input_streaming"] is True for t in json.loads(encoded)["tools"])
++    assert all("eager_input_streaming" not in t for t in manifest)
+diff --git a/tests/test_host_streaming.py b/tests/test_host_streaming.py
+new file mode 100644
+index 0000000..a9f9f54
+--- /dev/null
++++ b/tests/test_host_streaming.py
+@@ -0,0 +1,10 @@
++"""The installed profile must opt in to Hermes's streaming dispatch."""
++from types import SimpleNamespace
++
++
++def test_profile_routes_through_host_streaming(profile):
++    from agent.turn_api_call import _should_stream
++
++    agent = SimpleNamespace(provider=profile.name, base_url=profile.base_url,
++                            _disable_streaming=False, _has_stream_consumers=lambda: True)
++    assert _should_stream(agent) is True
+diff --git a/tests/test_native_progress_liveness.py b/tests/test_native_progress_liveness.py
+new file mode 100644
+index 0000000..c66c7cd
+--- /dev/null
++++ b/tests/test_native_progress_liveness.py
+@@ -0,0 +1,118 @@
++"""Native progress the plugin does not translate into text is still proof of life for the host.
++
++Hermes' stale detector only sees chunks. While the model generates a tool call, native streams
++``input_json_delta`` events and no text, so a plugin that yields nothing for them looks stalled
++and the host kills a healthy request. Synthetic CLI only.
++"""
++import json
++import sys
++import threading
++import time
++from pathlib import Path
++from types import SimpleNamespace
++
++import psutil
++import pytest
++
++import directsdk as ds
++
++
++def living(pid):
++    try:
++        return psutil.Process(pid).is_running() and psutil.Process(pid).status() != psutil.STATUS_ZOMBIE
++    except psutil.NoSuchProcess:
++        return False
++
++
++def is_liveness(chunk):
++    """A chunk that carries no content, tool call, reasoning or finish: only 'still working'."""
++    choice, delta = chunk.choices[0], chunk.choices[0].delta
++    return choice.finish_reason is None and not any(
++        getattr(delta, name, None) for name in ('content', 'tool_calls', 'reasoning_content', 'reasoning_details'))
++
++
++@pytest.fixture
++def native(tmp_path, monkeypatch):
++    monkeypatch.setattr(ds, 'apply_traffic_policy', lambda env: env)
++    pids = tmp_path / 'pids.jsonl'
++    command = [sys.executable, '-I', str(Path(__file__).parent / 'fixtures/progress_cli.py')]
++    clients, initial = [], set(threading.enumerate())
++
++    def make(mode, timeout=5, **knobs):
++        env = {'HOME': str(tmp_path), 'PATH': '', 'ANTHROPIC_BASE_URL': 'http://127.0.0.1:9',
++               'PROGRESS_PIDS': str(pids), 'PROGRESS_MODE': mode,
++               **{'PROGRESS_' + key.upper(): str(value) for key, value in knobs.items()}}
++        client = ds.Client(command=command, env=env, timeout=timeout)
++        clients.append(client)
++        return client
++
++    def spawned():
++        return [json.loads(line)['pid'] for line in pids.read_text().splitlines()] if pids.exists() else []
++
++    yield SimpleNamespace(make=make, spawned=spawned)
++    for client in clients:
++        client.close()
++        assert not client._requests
++    leftovers = [t for t in threading.enumerate() if t not in initial
++                 and t.name.startswith('claude-directsdk-') and t.is_alive()]
++    for t in leftovers:
++        t.join(2)
++    assert not any(t.is_alive() for t in leftovers), 'transport thread leaked'
++
++
++def query():
++    return dict(model='sonnet', messages=[{'role': 'user', 'content': 'go'}])
++
++
++def test_text_progress_streams_as_content(native):
++    """Positive control: the harness can observe native progress at all."""
++    chunks = list(native.make('text', deltas=6)._create(stream=True, **query()))
++    assert ''.join(c.choices[0].delta.content or '' for c in chunks[:-1]) == 'x' * 6
++
++
++def test_tool_argument_progress_is_visible_before_the_final_chunk(native):
++    chunks = list(native.make('tool_args', deltas=40)._create(stream=True, **query()))
++    *progress, final = chunks
++    assert hasattr(final, '_response') and final.choices[0].finish_reason == 'tool_calls'
++    heartbeats = [c for c in progress if is_liveness(c)]
++    assert len(heartbeats) >= 40, 'tool-call argument generation produced no chunk the host can see'
++    assert len(heartbeats) == len(progress), 'progress chunks must carry no content'
++
++
++def test_pings_are_not_progress(native):
++    """A ping proves the connection is open, not that the model is working.
++
++    If pings fed the host's stale detector, a stall that still pings would never be cancelled.
++    """
++    *progress, final = list(native.make('pings', deltas=10)._create(stream=True, **query()))
++    assert final.choices[0].finish_reason == 'stop'
++    assert not [c for c in progress if is_liveness(c)], 'a ping-only stretch must stay silent to the host'
++
++
++def test_progress_chunks_do_not_change_the_final_response(native):
++    streamed = list(native.make('tool_args', deltas=8)._create(stream=True, **query()))[-1]._response
++    direct = native.make('tool_args', deltas=8)._create(**query())
++    for response in (streamed, direct):
++        message = response.choices[0].message
++        assert response.choices[0].finish_reason == 'tool_calls' and message.content is None
++        assert [c.function.name for c in message.tool_calls] == ['lookup']
++    assert direct.choices[0].message.tool_calls == streamed.choices[0].message.tool_calls
++
++
++def test_internal_progress_outlives_the_idle_timeout(native):
++    """Progress resets the plugin's own idle deadline; only the host needed to see it."""
++    started = time.monotonic()
++    response = native.make('tool_args', timeout=1.5, deltas=25, gap=.1)._create(**query())
++    assert time.monotonic() - started > 1.5
++    assert response.choices[0].finish_reason == 'tool_calls'
++
++
++def test_true_stall_still_times_out_finitely_and_is_reaped(native):
++    started = time.monotonic()
++    with pytest.raises(TimeoutError):
++        native.make('silent', timeout=1.5)._create(**query())
++    assert time.monotonic() - started < 10  # finite; the bound only guards a hang and must tolerate a loaded runner
++    deadline = time.monotonic() + 5
++    while time.monotonic() < deadline and any(living(pid) for pid in native.spawned()):
++        time.sleep(.02)
++    assert native.spawned() and not any(living(pid) for pid in native.spawned()), 'stalled child leaked'

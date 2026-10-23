@@ -1,0 +1,4 @@
+# Bash scripts must keep LF line endings even when checked out on Windows.
+*.sh     text eol=lf
+*.patch  text eol=lf
+VERSIONS.lock text eol=lf
