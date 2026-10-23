@@ -12,7 +12,7 @@ for f in README.md AGENTS.md; do
   BAD="$(grep -noE 'refs/tags/v[0-9]+\.[0-9]+\.[0-9]+|hermes-csg-starter-[0-9]+\.[0-9]+\.[0-9]+|release \*\*v[0-9.]+\*\*|current release: v[0-9.]+' "$ROOT/$f" \
         | grep -vE "v$V|-$V\$|-$V[^0-9]" || true)"
   [ -z "$BAD" ] || { echo "$f has references to another version (want $V):"; echo "$BAD"; RC=1; }
-  grep -q "refs/tags/v$V.tar.gz" "$ROOT/$f" || { echo "$f has no download link for v$V"; RC=1; }
+  grep -q "codeload.github.com/MichaelStrange-CSG/hermes-csg-starter/tar.gz/refs/tags/v$V" "$ROOT/$f" || { echo "$f has no download link for v$V"; RC=1; }
 done
 [ $RC -eq 0 ] && echo "OK: README/AGENTS download links match v$V"
 exit $RC

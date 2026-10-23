@@ -15,7 +15,9 @@ names, customer details, addresses or anyone's SOUL text: everything here is pub
    AGENTS.md to the new version. `bash tools/check-release.sh` must print OK.
 5. Commit, tag `vX.Y.Z`, push the commit **and the tag** (`git push && git push origin vX.Y.Z`). The download
    link only works once the tag is on GitHub; check it with
-   `curl -fsSIL https://github.com/MichaelStrange-CSG/hermes-csg-starter/archive/refs/tags/vX.Y.Z.tar.gz`.
+   `curl -fsSL https://codeload.github.com/MichaelStrange-CSG/hermes-csg-starter/tar.gz/refs/tags/vX.Y.Z | tar -tz | head -3`.
+   (Use codeload, not `github.com/.../archive/refs/tags/...tar.gz`: right after the repo went public that
+   address served a cached web page instead of the file.)
 6. Optional offline copy: `bash tools/make-zip.sh` writes `dist/hermes-csg-starter-vX.Y.Z.zip` (only tracked
    files), for someone whose network blocks GitHub. They unzip it, open the folder in their AI tool and say
    "install Hermes"; CLAUDE.md / AGENTS.md tell the agent the folder is already the kit.
