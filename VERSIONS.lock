@@ -2,7 +2,7 @@
 # Format: KEY=VALUE, one per line, no quotes, no spaces around "=".
 # Change only by cutting a new tagged release (see MAINTAINERS.md), never by hand on a coworker's machine.
 
-STARTER_VERSION=1.1.1
+STARTER_VERSION=1.1.2
 
 # Hermes Agent: exact commit, installed with the official installer at that same commit.
 HERMES_VERSION=v0.21.7
